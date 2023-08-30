@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import zuko
 import corner
 
-output_dir = "./outputs_5par/"
+output_dir = "./outputs_singauss_5par/"
 appended = ""
 # a few conditions to choose which samplers to run
 generate_test = False

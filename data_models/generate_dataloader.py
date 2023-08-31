@@ -26,14 +26,16 @@ class SineGaussian():
         Returns:
             _type_: _description_
         """
-        norm_parameters, ps = self.sample_parameters(self.batch_size)
-        model = np.zeros((self.batch_size, len(self.times)))
+        norm_parameters, parameters = self.sample_parameters(self.batch_size)
+        model = np.zeros((self.batch_size, 1, len(self.times)))
         for i in range(self.batch_size):
-            model[i] = self.signal_model(*[parameters[key][i] for key in self.params_order])
+            model[i] = [self.signal_model(*[parameters[key][i] for key in self.params_order]), ]
 
         noise = self.make_noise(self.batch_size)
 
-        return norm_parameters, model + noise
+        out_parameters = np.array([norm_parameters[key] for key in self.params_order]).T
+
+        return out_parameters, model + noise
 
     def get_test_data(self, N):
         norm_parameters, parameters = self.sample_parameters(N)

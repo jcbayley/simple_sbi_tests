@@ -8,7 +8,7 @@ import pickle
 from torchsummary import summary
 import matplotlib.pyplot as plt
 import scipy.stats as st
-from generate_data import SineGaussian, Line
+from data_models.generate_dataloader import SineGaussian, Line
 import torch.nn as nn
 import corner
 import bilby
@@ -27,8 +27,9 @@ def setup_model(num_params,length, device="cpu", continue_train = False, checkpo
     #r2_network = ['Linear(64)', 'Linear(32)', 'Linear(16)']
     #q_network = ['Linear(64)', 'Linear(32)', 'Linear(16)']
 
+    """
     shared_conv = nn.Sequential(
-        nn.Conv2d(2, 32, (5,32), padding="same"),
+        nn.Conv2d(length[0], 32, (5,32), padding="same"),
         nn.ReLU(),
         nn.Conv2d(32, 32, (9,9), padding="same"),
         nn.MaxPool2d(2),
@@ -38,6 +39,20 @@ def setup_model(num_params,length, device="cpu", continue_train = False, checkpo
         nn.ReLU(),
         nn.Conv2d(32, 8, (3,3), padding="same"),
         nn.MaxPool2d(2),
+        nn.ReLU(),
+    )
+    """
+    shared_conv = nn.Sequential(
+        nn.Conv1d(length[0], 32, 32, padding="same"),
+        nn.ReLU(),
+        nn.Conv1d(32, 32, 9, padding="same"),
+        nn.MaxPool1d(2),
+        nn.ReLU(),
+        nn.Conv1d(32, 32, 5, padding="same"),
+        nn.MaxPool1d(2),
+        nn.ReLU(),
+        nn.Conv1d(32, 8, 3, padding="same"),
+        nn.MaxPool1d(2),
         nn.ReLU(),
     )
 
@@ -85,8 +100,8 @@ def setup_model(num_params,length, device="cpu", continue_train = False, checkpo
         checkpoint = torch.load(os.path.join(checkpoint_dir,"model.pt"), map_location=device)
         model.load_state_dict(checkpoint["model_state_dict"])
 
-    model.forward(torch.ones((1, length[0], length[1], length[2])).to(device), torch.ones((1, model.x_dim)).to(device))
-    summary(model, [(length[0], length[1], length[2]), (num_params, )])
+    #model.forward(torch.ones((1, length[0], length[1], length[2])).to(device), torch.ones((1, model.x_dim)).to(device))
+    #summary(model, [(length[0], length[1], length[2]), (num_params, )])
 
     optimiser = torch.optim.AdamW(model.parameters(), lr=5e-4, weight_decay=1e-5)
     scheduler = torch.optim.lr_scheduler.LinearLR(optimiser, start_factor=1.0, end_factor=0.01, total_iters=200)
@@ -314,7 +329,7 @@ class TestCallback():
 def run_train_vitamin(base_dir = "./test"):
     length = 10000
     times = np.linspace(0,100,length)
-    standard_deviation = 3
+    standard_deviation = 0.1
     n_train, n_val, n_test = int(16), int(5e2), int(1e2)
     #n_sinusoids = 0
     #seglen = 300
@@ -323,15 +338,15 @@ def run_train_vitamin(base_dir = "./test"):
     #tau_range = (0.01,10)
 
     train_data = SineGaussian(
-        noise_std=noise_std
+        noise_std=standard_deviation
         )
     
     validation_data = SineGaussian(
-        noise_std=noise_std
+        noise_std=standard_deviation
         )
 
     test_data = SineGaussian(
-        noise_std=noise_std
+        noise_std=standard_deviation
         )
 
     num_params = 5
@@ -349,35 +364,39 @@ def run_train_vitamin(base_dir = "./test"):
         os.makedirs(checkpoint_dir)
 
     if load_test_data:
-        with open(os.path.join(base_dir, f"test_data_nsin{n_sinusoids}.pkl"),"rb") as f:
+        with open(os.path.join(base_dir, f"test_data_nsin.pkl"),"rb") as f:
             test_data_array = pickle.load(f)
     else:
         test_data_array = test_data[0]
-        with open(os.path.join(base_dir, f"test_data_nsin{n_sinusoids}.pkl"),"wb+") as f:
+        with open(os.path.join(base_dir, f"test_data_nsin.pkl"),"wb+") as f:
             pickle.dump(test_data_array, f)
 
     if plot_test:
-        print(np.shape(test_data_array[0]))
-        for i in range(len(test_data_array[0])):
+        print(np.shape(test_data_array[1]))
+        for i in range(len(test_data_array[1])):
             if i > 10:
                 break
             fig, ax = plt.subplots()
-            img = ax.imshow(test_data_array[0][i][0].T**2 + test_data_array[0][i][1].T**2, aspect="auto", origin="lower",interpolation="none")
+            ax.plot(test_data_array[1][i])
+            #img = ax.imshow(test_data_array[1][i][0].T**2 + test_data_array[1][i][1].T**2, aspect="auto", origin="lower",interpolation="none")
             ax.set_xlabel("time")
             ax.set_ylabel("frequency")
 
-            fig.savefig(os.path.join(base_dir,f"nsin{n_sinusoids}_test{i}.png"))
+            fig.savefig(os.path.join(base_dir,f"nsin_test{i}.png"))
 
 
     #train_dat = torch.utils.data.DataLoader([data[int(i)] for i in range(n_train)], batch_size = 128, shuffle=True)
     #val_dat = torch.utils.data.DataLoader([data[int(i)] for i in range(n_val)], batch_size = 128, shuffle=True)
     #test_dat = torch.utils.data.DataLoader([test_data[int(i)] for i in range(n_test)], batch_size = 128, shuffle=False)
 
-    n_channels, n_fft, n_samp = train_data[0][0][0].shape
+    print(train_data[0][0].shape)
+    print(train_data[0][1].shape)    
+    #n_channels, n_fft, n_samp = train_data[0][1][0].shape
+    n_channels, n_samp = train_data[0][1][0].shape
 
     model, optimiser, scheduler = setup_model(
         num_params, 
-        (n_channels, n_fft, n_samp), 
+        (n_channels, 0, n_samp), 
         device=device, 
         checkpoint_dir=checkpoint_dir, 
         continue_train = continue_train
@@ -416,7 +435,7 @@ def run_train_vitamin(base_dir = "./test"):
             optimiser, 
             n_epochs, 
             train_data, 
-            validation_iterator = val_data, 
+            validation_iterator = validation_data, 
             callbacks = callbacks,
             verbose = False,
             continue_train=continue_train,

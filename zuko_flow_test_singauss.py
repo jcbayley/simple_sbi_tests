@@ -12,7 +12,11 @@ import matplotlib.pyplot as plt
 import zuko
 import corner
 
+<<<<<<< HEAD:linear_cont_increase/linear_reg_continuousflow.py
 output_dir = "./outputs_5par_sprior/"
+=======
+output_dir = "./outputs_singauss_5par/"
+>>>>>>> 68ad89e6767e0c2a48432943653449617b826217:zuko_flow_test_singauss.py
 appended = ""
 # a few conditions to choose which samplers to run
 generate_test = False

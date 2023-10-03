@@ -12,20 +12,22 @@ import matplotlib.pyplot as plt
 import zuko
 import corner
 
-output_dir = "./outputs_5par/"
+output_dir = "./outputs_5par_sprior/"
 appended = ""
 # a few conditions to choose which samplers to run
 generate_test = False
 load_test = True
-train_network = True
+train_network = False
 test_network = True
 run_mcmc_sampler = False
 make_test_plots = True
+continue_train = True
 
+device = "cuda:0"
 num_params = 5
-length = 50
+length = 1024
 xdat = np.linspace(0,1,length)
-sigma = 0.1
+sigma = 0.2
 pars = ["A", "t0", "ph","f","width"]
 prior_range = {
     "A_min": 0.1, 
@@ -33,11 +35,11 @@ prior_range = {
     "t0_min": 0.6,
     "t0_max": 1.6,
     "ph_min": 0,
-    "ph_max": 2*np.pi,
-    "f_min":2,
-    "f_max": 10,
+    "ph_max": 0.01,
+    "f_min":4,
+    "f_max": 6,
     "width_min":0.05,
-    "width_max": 0.7
+    "width_max": 0.8
 }
 
 
@@ -70,6 +72,9 @@ def unscale_pars(ms):
         new_ms[parind] = ms[parind]*(prior_range[f"{pars[parind]}_max"]- prior_range[f"{pars[parind]}_min"]) + prior_range[f"{pars[parind]}_min"]
     return new_ms
 
+
+def get_complex_spectorgram(timeseries):
+    pass
 
 
 def get_dataset(xdat, num_data, length = 100, sigma=0.1, num_params = 2):
@@ -116,15 +121,15 @@ elif load_test:
 
 
 
-def train_loop(model, dataset, optimiser):
+def train_loop(model, dataset, optimiser, device="cpu"):
     train_loss = []
     for index, (data, label) in enumerate(dataset):
         #print(data.size(), label.size())
-        input_data = data.to(torch.float32)#.flatten(start_dim=1)
+        input_data = data.to(torch.float32).to(device)#.flatten(start_dim=1)
         input_data = back_model(input_data)
         #loss = -model.log_prob(label.to(torch.float32), conditional=input_data).mean()
         #z, loss = model.compute_loss(label.to(torch.float32), conditional=input_data)
-        loss = -model(input_data).log_prob(label.to(torch.float32)).mean()
+        loss = -model(input_data).log_prob(label.to(torch.float32).to(device)).mean()
         train_loss.append(loss.item())
 
         optimiser.zero_grad()
@@ -134,22 +139,22 @@ def train_loop(model, dataset, optimiser):
     print(f"Train Loss: {avloss}")
     return avloss
 
-def test_loop(model, dataset):
+def test_loop(model, dataset, device="cpu"):
     test_loss = []
     with torch.no_grad():
         for data, label in dataset:
             #loss = -model.log_prob(label.to(torch.float32), conditional=data.flatten(start_dim=1).to(torch.float32)).mean()
             #z, loss = model.compute_loss(label.to(torch.float32), conditional=data.flatten(start_dim=1).to(torch.float32))
-            input_data = data.to(torch.float32)#.flatten(start_dim=1).to(torch.float32)
+            input_data = data.to(torch.float32).to(device)#.flatten(start_dim=1).to(torch.float32)
             input_data = back_model(input_data)
-            loss = -model(input_data).log_prob(label.to(torch.float32)).mean()
+            loss = -model(input_data).log_prob(label.to(torch.float32).to(device)).mean()
 
             test_loss.append(loss.item())
     avloss =  np.mean(test_loss)
     print(f"Val Loss: {avloss}")
     return avloss
 
-def sample_data(model, dataset, nsamples):
+def sample_data(model, dataset, nsamples, device="cpu"):
     model.eval()
     with torch.no_grad():
         outputs = []
@@ -160,18 +165,19 @@ def sample_data(model, dataset, nsamples):
             #print(samples.size(), data.repeat((nsamples, 1)).size())
             #output = model.inverse(samples.to(torch.float32), data.to(torch.float32).flatten(start_dim=1).repeat((nsamples, 1)))
 
-            input_data = data.to(torch.float32)#.flatten(start_dim=1).to(torch.float32)
+            input_data = data.to(torch.float32).to(device)#.flatten(start_dim=1).to(torch.float32)
             input_data = back_model(input_data)
-            output = model(input_data).sample((nsamples,)).squeeze()
+            output = model(input_data).sample((nsamples,)).squeeze().cpu().numpy()
             loc = np.where((output < 0 ) | (output > 1))[0]
             while len(loc) > 0:
                 loc = np.where((output < 0 ) | (output > 1))[0]
-                output_rep = model(input_data).sample((len(loc),)).squeeze()
+                output_rep = model(input_data).sample((len(loc),)).squeeze().cpu().numpy()
                 output[loc] = output_rep
 
             output = unscale_pars(output.T).T
+            unscale_labels = unscale_pars(label.numpy()[0])
             outputs.append(output)
-            labels.append(label.numpy()[0])
+            labels.append(unscale_labels)
 
     return outputs, labels
 
@@ -180,15 +186,17 @@ numpy_mask = np.random.randint(1, size = num_params)
 
 prior = torch.distributions.MultivariateNormal(torch.zeros(num_params), torch.eye(num_params))
 
-nsf_in_length = 32
+nsf_in_length = 256
 #model = Ffjord((num_params,), cfg = args)
 back_model = nn.Sequential(
-    nn.Conv1d(1, 64, 16),
-    nn.ReLU(),
-    nn.Conv1d(64, 32, 16),
+    nn.Conv1d(1, 64, 64),
     nn.MaxPool1d(2),
     nn.ReLU(),
-    nn.Conv1d(32, 16, 8),
+    nn.Conv1d(64, 64, 16),
+    nn.MaxPool1d(2),
+    nn.ReLU(),
+    nn.Conv1d(64, 32, 8),
+    nn.MaxPool1d(2),
     nn.ReLU(),
     nn.Flatten(),
     nn.LazyLinear(128),
@@ -196,9 +204,9 @@ back_model = nn.Sequential(
     nn.LazyLinear(128),
     nn.ReLU(),
     nn.LazyLinear(nsf_in_length)
-)
+).to(device)
 
-model = zuko.flows.NSF(num_params, nsf_in_length, bins=16, transforms=4, hidden_features=(256,128,64)).to(torch.float32)
+model = zuko.flows.NSF(num_params, nsf_in_length, bins=16, transforms=4, hidden_features=(256,128,64)).to(torch.float32).to(device)
 optimiser = torch.optim.AdamW(list(model.parameters()) + list(back_model.parameters()), 5e-6, weight_decay=1e-5)
 
 
@@ -214,14 +222,14 @@ if train_network == True:
     train_dataloader = torch.utils.data.DataLoader([[tr_dataset[1][i], rescale_train_par[i]] for i in range(len(tr_dataset[0]))], batch_size = 512, shuffle=True)
     val_dataloader = torch.utils.data.DataLoader([[val_dataset[1][i], rescale_val_par[i]] for i in range(len(val_dataset[0]))], batch_size = 128)   
 
-    n_epochs = 30
+    n_epochs = 1000
     losses = []
     val_losses = []
     for i in range(n_epochs):
         print("Epoch: ", i)
-        t_tr_loss = train_loop(model, train_dataloader, optimiser)
+        t_tr_loss = train_loop(model, train_dataloader, optimiser, device=device)
         losses.append(t_tr_loss)
-        t_v_loss = test_loop(model, val_dataloader)
+        t_v_loss = test_loop(model, val_dataloader,device=device)
         val_losses.append(t_v_loss)
 
         fig, ax = plt.subplots()
@@ -253,14 +261,14 @@ if test_network:
 
 
     # generate some samples (Run each sample through individually with shape (1, datapoints, channels))
-    samples, labels = sample_data(model, test_dataloader, 10000)
+    samples, labels = sample_data(model, test_dataloader, 10000, device=device)
 
     with open(os.path.join(output_dir, "samples.pkl"), "wb") as f:
-        pickle.dump(samples, f)
+        pickle.dump([samples, labels], f)
 
 
     with open(os.path.join(output_dir, f"samples{appended}.pkl"), "wb") as f:
-        pickle.dump(samples, f)
+        pickle.dump([samples, labels], f)
 
 
 
@@ -273,7 +281,7 @@ if run_mcmc_sampler:
     for td in range(len(test_dat[1])):
         # setup pymc model                                                                                                                                            
         with pm.Model() as gauss_model:
-            # uniform priors on each of the parameters as in the training data                                                                                        
+            # uniform priors on each of the parameters as in the training data                                                                                      
             priors = [
                 pm.Uniform(f"A",prior_range["A_min"],prior_range["A_max"]),
                 pm.Uniform(f"t0",prior_range["t0_min"],prior_range["t0_max"]),
@@ -281,6 +289,7 @@ if run_mcmc_sampler:
                 pm.Uniform(f"f",prior_range["f_min"],prior_range["f_max"]),
                 pm.Uniform(f"width",prior_range["width_min"],prior_range["width_max"])
                 ]
+            
             # Gaussian likelihood with fixed sigma as in training                                                                                                     
             lik = pm.Normal("lik", mu=data_model(xdat,priors), sigma=sigma, observed = np.squeeze(test_dat[1][td]))
 
@@ -313,14 +322,14 @@ if make_test_plots:
         mc_samps.append(np.array([np.concatenate(np.array(getattr(mcmc_samples[ind].posterior,pnum))) for pnum in pars]))
 
     with open(os.path.join(output_dir, f"samples{appended}.pkl"), "rb") as f:
-        samples = pickle.load(f)
+        samples, labels = pickle.load(f)
 
     if not os.path.isdir(os.path.join(output_dir, "post_plots")):
         os.makedirs(os.path.join(output_dir, "post_plots"))
 
     for td in range(len(test_dat[1])):
         print(td, np.shape(samples[td]), np.shape(mc_samps[td].T))
-        fig = corner.corner(samples[td].squeeze(),truths=test_dat[0][td], color="C1", labels = pars)
+        fig = corner.corner(samples[td].squeeze(),truths=labels[td], color="C1", labels = pars)
         fig = corner.corner(mc_samps[td].T, fig=fig, color="C2")
 
         fig.savefig(os.path.join(output_dir, "post_plots", f"test_plot_{td}.png"))
